@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
-
 from typing import Any, Dict, Optional
 
 ChatId = int | str
@@ -64,6 +63,9 @@ class TextMessageHandler:
         }
 
 
+DEFAULT_CONTACT_STORAGE = Path(__file__).resolve().parent / "authorized_contacts.jsonl"
+
+
 class TelegramWebhookHandler:
 
     """Обрабатывает входящие обновления Telegram, полученные через вебхук."""
@@ -71,10 +73,20 @@ class TelegramWebhookHandler:
     def __init__(
         self,
         text_handler: TextMessageHandler | None = None,
-        contact_storage_path: str | Path = "authorized_contacts.jsonl",
+        contact_storage_path: str | Path | None = None,
     ) -> None:
         self.text_handler = text_handler or TextMessageHandler()
-        self.contact_storage_path = Path(contact_storage_path)
+        if contact_storage_path is None:
+            storage_path = DEFAULT_CONTACT_STORAGE
+        else:
+            candidate = Path(contact_storage_path).expanduser()
+            storage_path = (
+                candidate
+                if candidate.is_absolute()
+                else DEFAULT_CONTACT_STORAGE.parent / candidate
+            )
+
+        self.contact_storage_path = storage_path.resolve()
 
     def handle_update(self, update: Mapping[str, Any] | None) -> Dict[str, Any]:
         """Обрабатывает обновление Telegram и формирует ответное сообщение."""
