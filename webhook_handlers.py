@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import os
 import requests
+import logging
+from logging import Logger
 from pathlib import Path
 
 from texts import DEFAULT_TEXTS, TextResources, load_texts
@@ -106,6 +108,15 @@ class TelegramWebhookHandler:
         text_handler: TextMessageHandler | None = None,
         contact_storage_path: str | Path | None = None,
     ) -> None:
+        # configure module logger
+        lvl = os.getenv("TELEGRAM_LOG_LEVEL", "INFO").upper()
+        logging.basicConfig()
+        self.logger: Logger = logging.getLogger("telegram_webhook")
+        try:
+            self.logger.setLevel(getattr(logging, lvl))
+        except Exception:
+            self.logger.setLevel(logging.INFO)
+
         self.text_handler = text_handler or TextMessageHandler()
         if contact_storage_path is None:
             storage_path = DEFAULT_CONTACT_STORAGE
@@ -123,10 +134,12 @@ class TelegramWebhookHandler:
         """Обрабатывает обновление Telegram и формирует ответное сообщение."""
 
         if not isinstance(update, Mapping):
+            self.logger.debug("handle_update: ignored - update is not a mapping")
             return {"status": "ignored"}
 
         message = update.get("message")
         if isinstance(message, Mapping):
+            self.logger.debug("handle_update: message received keys=%s", list(message.keys()))
             # prioritize document handling
             doc_response = self._handle_document_message(message)
             if doc_response is not None:
@@ -188,19 +201,23 @@ class TelegramWebhookHandler:
         """
         document = message.get("document")
         chat = message.get("chat")
+        self.logger.debug("_handle_document_message: document present? %s", bool(document))
         if not isinstance(document, Mapping) or not isinstance(chat, Mapping):
             return None
 
         chat_id = chat.get("id")
         if not isinstance(chat_id, (int, str)):
+            self.logger.debug("_handle_document_message: missing chat_id")
             return None
 
         file_id = document.get("file_id")
         file_name = document.get("file_name") or document.get("file_name")
         file_size = document.get("file_size") or document.get("file_size")
+        self.logger.debug("_handle_document_message: file_id=%s, file_name=%s, file_size=%s", file_id, file_name, file_size)
 
         # Only process .xls files
         if not isinstance(file_id, str) or not isinstance(document.get("mime_type"), str):
+            self.logger.debug("_handle_document_message: file_id or mime_type missing or invalid")
             return None
 
         mime = document.get("mime_type", "")
@@ -210,20 +227,25 @@ class TelegramWebhookHandler:
         # Enforce maximum file size: 1 MB
         MAX_BYTES = 1 * 1024 * 1024
         if isinstance(file_size, int) and file_size > MAX_BYTES:
+            self.logger.info("_handle_document_message: file_size exceeds limit")
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Файл слишком большой (макс 1МБ)."}
 
         # Need TELEGRAM_BOT_TOKEN to download/upload files
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not token:
+            self.logger.error("_handle_document_message: TELEGRAM_BOT_TOKEN not set in env")
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Сервис не настроен (нет токена)."}
 
         # 1) getFile to obtain path
         getfile_url = f"https://api.telegram.org/bot{token}/getFile"
         try:
+            self.logger.debug("_handle_document_message: calling getFile for file_id=%s", file_id)
             r = requests.get(getfile_url, params={"file_id": file_id}, timeout=10, proxies={"http": None, "https": None})
             r.raise_for_status()
             data = r.json()
-        except Exception:
+            self.logger.debug("_handle_document_message: getFile response keys=%s", list(data.keys()))
+        except Exception as exc:
+            self.logger.error("_handle_document_message: getFile failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось получить файл от Telegram."}
 
         result = data.get("result") or {}
@@ -234,10 +256,13 @@ class TelegramWebhookHandler:
         file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
 
         try:
+            self.logger.debug("_handle_document_message: downloading file from %s", file_url)
             r2 = requests.get(file_url, timeout=20, proxies={"http": None, "https": None})
             r2.raise_for_status()
             xls_bytes = r2.content
-        except Exception:
+            self.logger.debug("_handle_document_message: downloaded %d bytes", len(xls_bytes))
+        except Exception as exc:
+            self.logger.error("_handle_document_message: download failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось скачать файл."}
 
         if len(xls_bytes) > MAX_BYTES:
@@ -245,11 +270,15 @@ class TelegramWebhookHandler:
 
         # Convert
         if convert_xls_bytes_to_xlsx_bytes is None:
+            self.logger.error("_handle_document_message: converter not available")
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Конвертер не доступен на сервере."}
 
         try:
+            self.logger.debug("_handle_document_message: starting conversion")
             xlsx_bytes = convert_xls_bytes_to_xlsx_bytes(xls_bytes)
-        except Exception:
+            self.logger.debug("_handle_document_message: conversion done, %d bytes", len(xlsx_bytes))
+        except Exception as exc:
+            self.logger.error("_handle_document_message: conversion failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Ошибка при конвертации файла."}
 
         # Upload back to Telegram via sendDocument (multipart/form-data)
@@ -259,11 +288,13 @@ class TelegramWebhookHandler:
         }
         data = {"chat_id": str(chat_id)}
         try:
+            self.logger.debug("_handle_document_message: uploading converted file to Telegram sendDocument")
             resp = requests.post(send_url, data=data, files=files, timeout=30, proxies={"http": None, "https": None})
             resp.raise_for_status()
-            # return ack to webhook caller
+            self.logger.info("_handle_document_message: sendDocument success")
             return {"status": "sent"}
-        except Exception:
+        except Exception as exc:
+            self.logger.error("_handle_document_message: sendDocument failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось отправить конвертированный файл обратно."}
 
     def _create_contact_acknowledgement(
