@@ -12,7 +12,7 @@ ChatId = int | str
 
 class TextMessageHandler:
 
-    """Обрабатывает входящие текстовые сообщения из Telegram."""
+    """Обрабатывает входящие текстовые сообщения из Telegram. даёт ответы на команды."""
 
     def __init__(
         self,
