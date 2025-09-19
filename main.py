@@ -21,7 +21,8 @@ def telegram_webhook() -> ResponseReturnValue:
 @app.route("/", methods=["GET"])
 def index() -> ResponseReturnValue:
     """Возвращает простой эндпоинт для проверки работоспособности."""
-
+    print("Health check OK")
+    
     return {"status": "running"}
 
 
