@@ -5,8 +5,16 @@ import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Dict, Optional
+import os
+import requests
+from pathlib import Path
 
 from texts import DEFAULT_TEXTS, TextResources, load_texts
+try:
+    # optional runtime import for integration example
+    from xls_to_xlsx import convert_xls_bytes_to_xlsx_bytes  # type: ignore
+except Exception:
+    convert_xls_bytes_to_xlsx_bytes = None  # type: ignore
 
 ChatId = int | str
 
@@ -119,6 +127,11 @@ class TelegramWebhookHandler:
 
         message = update.get("message")
         if isinstance(message, Mapping):
+            # prioritize document handling
+            doc_response = self._handle_document_message(message)
+            if doc_response is not None:
+                return doc_response
+
             contact_response = self._handle_contact_message(message)
             if contact_response is not None:
                 return contact_response
@@ -153,8 +166,105 @@ class TelegramWebhookHandler:
         if not isinstance(chat_id, (int, str)):
             return None
 
+        # If update contains a document (file) we may want to convert it.
+        # Telegram provides files via getFile API; this project keeps handlers
+        # pure (returns payloads) so actual file download is done externally.
+        # Below is an example of how you could integrate conversion once you
+        # have raw bytes of an incoming .xls file:
+        #
+        # if convert_xls_bytes_to_xlsx_bytes is not None and message.get("document"):
+        #     # fetch file bytes using Telegram getFile and requests (not shown here)
+        #     xls_bytes = fetch_file_bytes_somehow(file_path)
+        #     xlsx_bytes = convert_xls_bytes_to_xlsx_bytes(xls_bytes)
+        #     # then store/send xlsx_bytes as needed
 
         return self._create_contact_acknowledgement(chat_id, message)
+
+    def _handle_document_message(self, message: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        """If message contains a document (.xls), download, convert and send back.
+
+        Returns a payload dict for Telegram API response if action was performed,
+        otherwise None.
+        """
+        document = message.get("document")
+        chat = message.get("chat")
+        if not isinstance(document, Mapping) or not isinstance(chat, Mapping):
+            return None
+
+        chat_id = chat.get("id")
+        if not isinstance(chat_id, (int, str)):
+            return None
+
+        file_id = document.get("file_id")
+        file_name = document.get("file_name") or document.get("file_name")
+        file_size = document.get("file_size") or document.get("file_size")
+
+        # Only process .xls files
+        if not isinstance(file_id, str) or not isinstance(document.get("mime_type"), str):
+            return None
+
+        mime = document.get("mime_type", "")
+        if not (mime in ("application/vnd.ms-excel",) or (isinstance(file_name, str) and file_name.lower().endswith(".xls"))):
+            return None
+
+        # Enforce maximum file size: 1 MB
+        MAX_BYTES = 1 * 1024 * 1024
+        if isinstance(file_size, int) and file_size > MAX_BYTES:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Файл слишком большой (макс 1МБ)."}
+
+        # Need TELEGRAM_BOT_TOKEN to download/upload files
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if not token:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Сервис не настроен (нет токена)."}
+
+        # 1) getFile to obtain path
+        getfile_url = f"https://api.telegram.org/bot{token}/getFile"
+        try:
+            r = requests.get(getfile_url, params={"file_id": file_id}, timeout=10, proxies={"http": None, "https": None})
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось получить файл от Telegram."}
+
+        result = data.get("result") or {}
+        file_path = result.get("file_path")
+        if not isinstance(file_path, str):
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Неверный ответ Telegram при получении файла."}
+
+        file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+
+        try:
+            r2 = requests.get(file_url, timeout=20, proxies={"http": None, "https": None})
+            r2.raise_for_status()
+            xls_bytes = r2.content
+        except Exception:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось скачать файл."}
+
+        if len(xls_bytes) > MAX_BYTES:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Файл слишком большой (макс 1МБ)."}
+
+        # Convert
+        if convert_xls_bytes_to_xlsx_bytes is None:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Конвертер не доступен на сервере."}
+
+        try:
+            xlsx_bytes = convert_xls_bytes_to_xlsx_bytes(xls_bytes)
+        except Exception:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Ошибка при конвертации файла."}
+
+        # Upload back to Telegram via sendDocument (multipart/form-data)
+        send_url = f"https://api.telegram.org/bot{token}/sendDocument"
+        files = {
+            "document": ( (file_name or "converted.xlsx"), xlsx_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ),
+        }
+        data = {"chat_id": str(chat_id)}
+        try:
+            resp = requests.post(send_url, data=data, files=files, timeout=30, proxies={"http": None, "https": None})
+            resp.raise_for_status()
+            # return ack to webhook caller
+            return {"status": "sent"}
+        except Exception:
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось отправить конвертированный файл обратно."}
 
     def _create_contact_acknowledgement(
         self, chat_id: ChatId, message: Mapping[str, Any]
