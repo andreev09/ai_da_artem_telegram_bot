@@ -1,22 +1,37 @@
 from __future__ import annotations
 
+
+import json
 from collections.abc import Callable, Mapping
+from pathlib import Path
+
 from typing import Any, Dict, Optional
 
 ChatId = int | str
 
 
 class TextMessageHandler:
-    """Process incoming Telegram text messages."""
 
-    def __init__(self, greeting_text: str = "Привет! Рада познакомиться.") -> None:
-        self.greeting_text = greeting_text
+    """Обрабатывает входящие текстовые сообщения из Telegram."""
+
+    def __init__(
+        self,
+        greeting_text: str | None = None,
+        authorize_button_text: str = "Авторизоваться",
+    ) -> None:
+        self.greeting_text = (
+            greeting_text
+            or "Привет! Чтобы продолжить, авторизуйтесь через отправку контакта "
+            "кнопкой ниже."
+        )
+        self.authorize_button_text = authorize_button_text
         self._command_handlers: Dict[str, Callable[[ChatId], Dict[str, Any]]] = {
             "/start": self._handle_start,
         }
 
     def handle(self, chat_id: ChatId, text: str) -> Optional[Dict[str, Any]]:
-        """Return a Telegram API response for the provided text message."""
+        """Возвращает ответ для Telegram API на переданное текстовое сообщение."""
+
         normalized = text.strip()
         if not normalized:
             return None
@@ -33,17 +48,37 @@ class TextMessageHandler:
             "method": "sendMessage",
             "chat_id": chat_id,
             "text": self.greeting_text,
+            "reply_markup": {
+                "keyboard": [
+                    [
+                        {
+                            "text": self.authorize_button_text,
+                            "request_contact": True,
+                        }
+                    ]
+                ],
+                "resize_keyboard": True,
+                "one_time_keyboard": True,
+            },
+
         }
 
 
 class TelegramWebhookHandler:
-    """Handle incoming Telegram webhook updates."""
 
-    def __init__(self, text_handler: TextMessageHandler | None = None) -> None:
+    """Обрабатывает входящие обновления Telegram, полученные через вебхук."""
+
+    def __init__(
+        self,
+        text_handler: TextMessageHandler | None = None,
+        contact_storage_path: str | Path = "authorized_contacts.jsonl",
+    ) -> None:
         self.text_handler = text_handler or TextMessageHandler()
+        self.contact_storage_path = Path(contact_storage_path)
 
     def handle_update(self, update: Mapping[str, Any] | None) -> Dict[str, Any]:
-        """Process a Telegram webhook update and return a response payload."""
+        """Обрабатывает обновление Telegram и формирует ответное сообщение."""
+
         if not isinstance(update, Mapping):
             return {"status": "ignored"}
 
@@ -83,11 +118,17 @@ class TelegramWebhookHandler:
         if not isinstance(chat_id, (int, str)):
             return None
 
-        return self._create_contact_acknowledgement(chat_id, contact)
+
+        return self._create_contact_acknowledgement(chat_id, message)
 
     def _create_contact_acknowledgement(
-        self, chat_id: ChatId, contact: Mapping[str, Any]
+        self, chat_id: ChatId, message: Mapping[str, Any]
     ) -> Dict[str, Any]:
+        contact = message.get("contact")
+        contact_payload = self._prepare_contact_payload(chat_id, message)
+        if contact_payload is not None:
+            self._print_contact_data(contact_payload)
+            self._persist_contact_data(contact_payload)
         first_name = contact.get("first_name")
         last_name = contact.get("last_name")
         phone = contact.get("phone_number")
@@ -110,3 +151,52 @@ class TelegramWebhookHandler:
             "chat_id": chat_id,
             "text": text,
         }
+
+    def _prepare_contact_payload(
+        self, chat_id: ChatId, message: Mapping[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        contact = message.get("contact")
+        if not isinstance(contact, Mapping):
+            return None
+
+        contact_dict = {
+            key: value
+            for key, value in contact.items()
+            if isinstance(key, str)
+        }
+
+        author = message.get("from")
+        author_dict: Optional[Dict[str, Any]] = None
+        if isinstance(author, Mapping):
+            author_dict = {
+                key: value
+                for key, value in author.items()
+                if isinstance(key, str)
+            }
+
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "contact": contact_dict,
+        }
+        message_id = message.get("message_id")
+        if isinstance(message_id, int):
+            payload["message_id"] = message_id
+
+        date = message.get("date")
+        if isinstance(date, int):
+            payload["date"] = date
+
+        if author_dict is not None:
+            payload["from"] = author_dict
+
+        return payload
+
+    def _print_contact_data(self, payload: Mapping[str, Any]) -> None:
+        formatted = json.dumps(payload, ensure_ascii=False)
+        print(f"Получены данные авторизации: {formatted}")
+
+    def _persist_contact_data(self, payload: Mapping[str, Any]) -> None:
+        self.contact_storage_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False)
+        with self.contact_storage_path.open("a", encoding="utf-8") as file:
+            file.write(line + "\n")
