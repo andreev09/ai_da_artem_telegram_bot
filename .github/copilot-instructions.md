@@ -56,3 +56,5 @@ If anything is unclear, ask for:
 
 ---
 Small, focused guidance — update if you add tests, CI, or change storage.
+
+Всегда отвечай на русском языке.

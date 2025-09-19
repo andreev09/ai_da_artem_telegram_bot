@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from texts import DEFAULT_TEXTS, TextResources, load_texts
+
 ChatId = int | str
 
 
@@ -16,14 +18,35 @@ class TextMessageHandler:
     def __init__(
         self,
         greeting_text: str | None = None,
-        authorize_button_text: str = "Авторизоваться",
+        authorize_button_text: str | None = None,
+        *,
+        texts: Mapping[str, str] | TextResources | None = None,
+        contact_saved_template: str | None = None,
     ) -> None:
-        self.greeting_text = (
-            greeting_text
-            or "Привет! Чтобы продолжить, авторизуйтесь через отправку контакта "
-            "кнопкой ниже."
+        if texts is None:
+            resources = load_texts()
+        elif isinstance(texts, TextResources):
+            resources = texts
+        else:
+            resources = TextResources(texts)
+
+        self.texts = resources
+
+        default_greeting = resources.get("greeting_text", DEFAULT_TEXTS["greeting_text"])
+        default_button = resources.get(
+            "authorize_button_text", DEFAULT_TEXTS["authorize_button_text"]
         )
-        self.authorize_button_text = authorize_button_text
+        default_template = resources.get(
+            "contact_saved_template", DEFAULT_TEXTS["contact_saved_template"]
+        )
+
+        self.greeting_text = greeting_text if greeting_text is not None else default_greeting
+        self.authorize_button_text = (
+            authorize_button_text if authorize_button_text is not None else default_button
+        )
+        self.contact_saved_template = (
+            contact_saved_template if contact_saved_template is not None else default_template
+        )
         self._command_handlers: Dict[str, Callable[[ChatId], Dict[str, Any]]] = {
             "/start": self._handle_start,
         }
@@ -157,7 +180,16 @@ class TelegramWebhookHandler:
         else:
             contact_label = "контакт"
 
-        text = f"Спасибо! {contact_label} сохранён для авторизации."
+        template_source = getattr(
+            self.text_handler, "contact_saved_template", DEFAULT_TEXTS["contact_saved_template"]
+        )
+        template = template_source or DEFAULT_TEXTS["contact_saved_template"]
+        try:
+            text = template.format(contact_label=contact_label)
+        except (KeyError, IndexError, ValueError):
+            text = DEFAULT_TEXTS["contact_saved_template"].format(
+                contact_label=contact_label
+            )
         return {
             "method": "sendMessage",
             "chat_id": chat_id,
