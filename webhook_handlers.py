@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
+
 from typing import Any, Dict, Optional
 
 ChatId = int | str
 
 
 class TextMessageHandler:
+
     """Обрабатывает входящие текстовые сообщения из Telegram."""
 
     def __init__(
@@ -28,6 +31,7 @@ class TextMessageHandler:
 
     def handle(self, chat_id: ChatId, text: str) -> Optional[Dict[str, Any]]:
         """Возвращает ответ для Telegram API на переданное текстовое сообщение."""
+
         normalized = text.strip()
         if not normalized:
             return None
@@ -56,10 +60,12 @@ class TextMessageHandler:
                 "resize_keyboard": True,
                 "one_time_keyboard": True,
             },
+
         }
 
 
 class TelegramWebhookHandler:
+
     """Обрабатывает входящие обновления Telegram, полученные через вебхук."""
 
     def __init__(
@@ -72,6 +78,7 @@ class TelegramWebhookHandler:
 
     def handle_update(self, update: Mapping[str, Any] | None) -> Dict[str, Any]:
         """Обрабатывает обновление Telegram и формирует ответное сообщение."""
+
         if not isinstance(update, Mapping):
             return {"status": "ignored"}
 
@@ -111,6 +118,7 @@ class TelegramWebhookHandler:
         if not isinstance(chat_id, (int, str)):
             return None
 
+
         return self._create_contact_acknowledgement(chat_id, message)
 
     def _create_contact_acknowledgement(
@@ -121,7 +129,6 @@ class TelegramWebhookHandler:
         if contact_payload is not None:
             self._print_contact_data(contact_payload)
             self._persist_contact_data(contact_payload)
-
         first_name = contact.get("first_name")
         last_name = contact.get("last_name")
         phone = contact.get("phone_number")

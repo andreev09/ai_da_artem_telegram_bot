@@ -12,6 +12,7 @@ webhook_handler = TelegramWebhookHandler()
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook() -> ResponseReturnValue:
     """Обрабатывает входящие обновления Telegram, пришедшие по вебхуку."""
+
     update = request.get_json(silent=True)
     response_payload = webhook_handler.handle_update(update)
     return jsonify(response_payload), 200
@@ -20,6 +21,7 @@ def telegram_webhook() -> ResponseReturnValue:
 @app.route("/", methods=["GET"])
 def index() -> ResponseReturnValue:
     """Возвращает простой эндпоинт для проверки работоспособности."""
+
     return {"status": "running"}
 
 
