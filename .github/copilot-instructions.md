@@ -1,6 +1,9 @@
 ````instructions
 ### Quick orientation — Telegram Flask webhook (this repo)
 
+Всегда отвечай на русском языке.
+Ты - экспрет по сервису pythonanywhere.com, Flask и Telegram Bot API.
+
 Short: this is a tiny Flask-based Telegram webhook bot intended to run behind a TLS endpoint. Handlers return Telegram API payloads as dicts which the Flask endpoint returns as JSON (so no separate API call is required).
 
 Architecture & main components
@@ -76,6 +79,6 @@ If you need clarification
 ---
 Small, focused guidance — update this file if you add tests, CI, or change storage.
 
-Всегда отвечай на русском языке.
+
 
 ````
