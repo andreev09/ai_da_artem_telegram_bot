@@ -6,17 +6,48 @@
 
 - Python 3.11+ (используются аннотации `|` и `from __future__ import annotations`).
 - Системные библиотеки для сборки пакетов Python (Linux: `build-essential`, `libffi-dev`, `libxml2-dev`, `libxslt-dev` при необходимости).
+- LibreOffice 7+ с CLI `soffice` (достаточно headless-пакета, если доступны метапакеты дистрибутива).
 - Установленное и активированное виртуальное окружение (`python -m venv .venv && source .venv/bin/activate`).
 - Доступ к Telegram Bot API (токен, выданный `@BotFather`) — обязателен для сценариев скачивания/отправки файлов.
 
 ## Установка зависимостей
+
+### Python-пакеты
 
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Файл `requirements.txt` содержит библиотеки для Flask-приложения, работы с Telegram и конвертации Excel.
+`requirements.txt` включает зависимости вебхука и вспомогательных утилит. Конвертация Excel выполняется внешним CLI, поэтому дополнительных Python-библиотек не требуется.
+
+### LibreOffice (`soffice`)
+
+Установите LibreOffice с поддержкой headless-режима. На популярных платформах подойдут следующие команды:
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install -y libreoffice
+
+# macOS (Homebrew)
+brew install --cask libreoffice
+```
+
+Проверьте, что бинарник доступен:
+
+```bash
+soffice --headless --version
+```
+
+Если `soffice` лежит в нестандартной директории, добавьте её в `PATH` или задайте путь явно:
+
+```bash
+export SOFFICE_BIN=/opt/libreoffice/program/soffice
+# или
+export PATH="/opt/libreoffice/program:$PATH"
+```
+
+Эти переменные понадобятся как при запуске приложения, так и во время тестов.
 
 ## Запуск приложения
 
@@ -55,7 +86,13 @@ pytest
 python -m unittest
 ```
 
-Запускайте тесты перед коммитами и после значимых изменений текстов или конвертера Excel.
+Тест `tests/test_xls_converter.py` использует внешний CLI. Убедитесь, что `soffice` доступен по умолчанию или укажите путь через `SOFFICE_BIN`, прежде чем запускать его отдельно:
+
+```bash
+SOFFICE_BIN=/opt/libreoffice/program/soffice pytest tests/test_xls_converter.py
+```
+
+Запускайте весь набор тестов перед коммитами и после значимых изменений текстов или конвертера Excel.
 
 ## Работа с текстами
 
@@ -78,13 +115,13 @@ python -m unittest
 
 ## Конвертация Excel
 
-Функция `convert_xls_bytes_to_xlsx_bytes` используется, когда пользователь присылает `.xls` файл:
+`convert_xls_bytes_to_xlsx_bytes` получает байты `.xls`, сохраняет их во временной директории и запускает LibreOffice в headless-режиме:
 
-1. Бот через `getFile` получает временный URL.
-2. Файл скачивается и передаётся в конвертер.
-3. Результат загружается обратно через `sendDocument`.
+1. Обработчик скачивает файл из Telegram через `getFile` и передаёт байты в `xls_to_xlsx`.
+2. Модуль формирует команду `soffice --headless --convert-to xlsx --outdir <temp>` (путь к бинарнику берётся из `SOFFICE_BIN` или из `PATH`).
+3. Полученный `.xlsx` считывается обратно и отправляется пользователю через `sendDocument`.
 
-При отсутствии конвертера (например, если пакет `xlwt` не установлен) бот ответит сообщением об ошибке. Для улучшения UX можно дорабатывать `_handle_document_message`, например, добавив очередь задач или интеграцию с внешним конвертером.
+Если LibreOffice не установлен или не найден, функция возвращает контролируемое исключение, а бот сообщает пользователю о недоступности конвертации. При необходимости можно заменить вызов CLI на интеграцию с внешним сервисом или очередь заданий — интерфейс модуля остаётся прежним.
 
 ## Контроль качества
 
