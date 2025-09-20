@@ -9,7 +9,6 @@ import os
 import requests
 import logging
 from logging import Logger
-from pathlib import Path
 
 from texts import DEFAULT_TEXTS, TextResources, load_texts
 try:
@@ -213,9 +212,14 @@ class TelegramWebhookHandler:
             return None
 
         file_id = document.get("file_id")
-        file_name = document.get("file_name") or document.get("file_name")
-        file_size = document.get("file_size") or document.get("file_size")
+        file_name = document.get("file_name")
+        file_size = document.get("file_size")
         mime_type = document.get("mime_type", "")
+        printable_name = file_name if isinstance(file_name, str) and file_name else "(без имени)"
+        print(
+            f"Пользователь загрузил файл: {printable_name} (file_id={file_id})",
+            flush=True,
+        )
         self.logger.info(
             "Получен документ: file_id=%s, file_name=%s, mime_type=%s, file_size=%s",
             file_id,
