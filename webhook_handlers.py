@@ -213,15 +213,30 @@ class TelegramWebhookHandler:
         file_id = document.get("file_id")
         file_name = document.get("file_name") or document.get("file_name")
         file_size = document.get("file_size") or document.get("file_size")
-        self.logger.debug("_handle_document_message: file_id=%s, file_name=%s, file_size=%s", file_id, file_name, file_size)
+        mime_type = document.get("mime_type", "")
+        self.logger.info(
+            "Получен документ: file_id=%s, file_name=%s, mime_type=%s, file_size=%s",
+            file_id,
+            file_name,
+            mime_type,
+            file_size,
+        )
 
         # Only process .xls files
-        if not isinstance(file_id, str) or not isinstance(document.get("mime_type"), str):
+        if not isinstance(file_id, str) or not isinstance(mime_type, str):
             self.logger.debug("_handle_document_message: file_id or mime_type missing or invalid")
             return None
 
-        mime = document.get("mime_type", "")
-        if not (mime in ("application/vnd.ms-excel",) or (isinstance(file_name, str) and file_name.lower().endswith(".xls"))):
+        supported_mimes = {"application/vnd.ms-excel"}
+        supported_extensions = (".xls", ".xlx")
+        has_supported_mime = mime_type in supported_mimes
+        has_supported_extension = isinstance(file_name, str) and file_name.lower().endswith(supported_extensions)
+        if not (has_supported_mime or has_supported_extension):
+            self.logger.info(
+                "Документ пропущен: неподдерживаемый формат (mime_type=%s, file_name=%s)",
+                mime_type,
+                file_name,
+            )
             return None
 
         # Enforce maximum file size: 1 MB
@@ -239,7 +254,7 @@ class TelegramWebhookHandler:
         # 1) getFile to obtain path
         getfile_url = f"https://api.telegram.org/bot{token}/getFile"
         try:
-            self.logger.debug("_handle_document_message: calling getFile for file_id=%s", file_id)
+            self.logger.info("Шаг 1: запрос пути к файлу getFile для %s", file_id)
             r = requests.get(getfile_url, params={"file_id": file_id}, timeout=10, proxies={"http": None, "https": None})
             r.raise_for_status()
             data = r.json()
@@ -256,11 +271,11 @@ class TelegramWebhookHandler:
         file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
 
         try:
-            self.logger.debug("_handle_document_message: downloading file from %s", file_url)
+            self.logger.info("Шаг 2: скачивание файла из Telegram (%s)", file_url)
             r2 = requests.get(file_url, timeout=20, proxies={"http": None, "https": None})
             r2.raise_for_status()
             xls_bytes = r2.content
-            self.logger.debug("_handle_document_message: downloaded %d bytes", len(xls_bytes))
+            self.logger.info("Шаг 2: скачано %d байт", len(xls_bytes))
         except Exception as exc:
             self.logger.error("_handle_document_message: download failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Не удалось скачать файл."}
@@ -274,9 +289,9 @@ class TelegramWebhookHandler:
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Конвертер не доступен на сервере."}
 
         try:
-            self.logger.debug("_handle_document_message: starting conversion")
+            self.logger.info("Шаг 3: запуск конвертации")
             xlsx_bytes = convert_xls_bytes_to_xlsx_bytes(xls_bytes)
-            self.logger.debug("_handle_document_message: conversion done, %d bytes", len(xlsx_bytes))
+            self.logger.info("Шаг 3: конвертация завершена, %d байт", len(xlsx_bytes))
         except Exception as exc:
             self.logger.error("_handle_document_message: conversion failed: %s", exc)
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Ошибка при конвертации файла."}
@@ -288,10 +303,10 @@ class TelegramWebhookHandler:
         }
         data = {"chat_id": str(chat_id)}
         try:
-            self.logger.debug("_handle_document_message: uploading converted file to Telegram sendDocument")
+            self.logger.info("Шаг 4: отправка конвертированного файла обратно в Telegram")
             resp = requests.post(send_url, data=data, files=files, timeout=30, proxies={"http": None, "https": None})
             resp.raise_for_status()
-            self.logger.info("_handle_document_message: sendDocument success")
+            self.logger.info("Шаг 4: файл успешно отправлен")
             return {"status": "sent"}
         except Exception as exc:
             self.logger.error("_handle_document_message: sendDocument failed: %s", exc)
