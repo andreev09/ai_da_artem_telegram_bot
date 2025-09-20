@@ -103,6 +103,8 @@ class TelegramWebhookHandler:
 
     """Обрабатывает входящие обновления Telegram, полученные через вебхук."""
 
+    _PROCESSING_MESSAGE = "Мы получили ваш файл. Работаем над конвертацией"
+
     def __init__(
         self,
         text_handler: TextMessageHandler | None = None,
@@ -250,6 +252,8 @@ class TelegramWebhookHandler:
         if not token:
             self.logger.error("_handle_document_message: TELEGRAM_BOT_TOKEN not set in env")
             return {"method": "sendMessage", "chat_id": chat_id, "text": "Сервис не настроен (нет токена)."}
+
+        self._notify_file_processing(token, chat_id)
 
         # 1) getFile to obtain path
         getfile_url = f"https://api.telegram.org/bot{token}/getFile"
@@ -400,3 +404,20 @@ class TelegramWebhookHandler:
         line = json.dumps(payload, ensure_ascii=False)
         with self.contact_storage_path.open("a", encoding="utf-8") as file:
             file.write(line + "\n")
+
+    def _notify_file_processing(self, token: str, chat_id: ChatId) -> None:
+        """Отправляет пользователю сообщение о начале конвертации."""
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": str(chat_id), "text": self._PROCESSING_MESSAGE}
+        try:
+            self.logger.info("Отправка уведомления о начале обработки файла")
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=10,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            self.logger.error("Не удалось отправить уведомление о начале обработки: %s", exc)
