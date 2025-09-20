@@ -3,10 +3,9 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 from flask.typing import ResponseReturnValue
 
-from server_config import configure_flask_environment
 from webhook_handlers import TelegramWebhookHandler
 
-_BIND_PORT = configure_flask_environment()
+_BIND_PORT = 8000
 app = Flask(__name__)
 webhook_handler = TelegramWebhookHandler()
 
