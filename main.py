@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
-
 from flask import Flask, jsonify, request
 from flask.typing import ResponseReturnValue
 
+from server_config import configure_flask_environment
 from webhook_handlers import TelegramWebhookHandler
 
+_BIND_PORT = configure_flask_environment()
 app = Flask(__name__)
 webhook_handler = TelegramWebhookHandler()
 
@@ -29,5 +29,4 @@ def index() -> ResponseReturnValue:
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=_BIND_PORT)
