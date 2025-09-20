@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from flask import Flask, jsonify, request
 from flask.typing import ResponseReturnValue
 
@@ -27,4 +29,5 @@ def index() -> ResponseReturnValue:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", "8000"))
+    app.run(host="0.0.0.0", port=port)
